@@ -16,25 +16,23 @@
 * paho-mqtt 1.6.1
 * Docker version 20.10.22
 
-## DEMO
-
-後で書く
-
-## Broker側で起動までに行った内容  
+## Pub／SubのためにBrokerで行った設定 
 ### ユーザの作成  
-artemisを起動後にまずはユーザを作成したかった。  
-管理コンソールがあるのでそちらにログインする。  
+管理コンソールでユーザやアドレスを作成できるのでまずはそちらにログイン。
+    
 初期のユーザ名とパスワードは「artemis」だった。
 http://localhost:8161/console/auth/login
 <img width="1279" alt="スクリーンショット 2023-03-26 20 49 50" src="https://user-images.githubusercontent.com/103823940/227773718-c7fe8816-8208-48e7-b2b1-dc34d5fa2108.png">
 
 ArtemisタブのOperationにユーザを作成するAPIが提供されていた。ここで作成する。
 <img width="1434" alt="スクリーンショット 2023-03-26 20 55 59" src="https://user-images.githubusercontent.com/103823940/227773977-084b2274-9d49-4e2a-8494-15a4d0b0d806.png">
-  
-ここで作成したユーザはConsoleでログインする時やClientからConnectionする時に利用した。  
+   
 
 ### アドレスの作成 
 pub/subする際にClientから指定する際に利用した。下記イメージのAPIで作成可能。
+アドレスはメッセージの宛先となる。アドレスにキューがバインドされていて、そのキューの名前がTopicということになるのかな。。(アドレス宛に送信したメッセージがTopic名をプレフィックスとしたキューに投げ込まれてくことをイメージ)
+※[参考](https://activemq.apache.org/components/artemis/documentation/)(MQTT保持メッセージ)
+
 <img width="827" alt="スクリーンショット 2023-04-08 18 10 44" src="https://user-images.githubusercontent.com/103823940/230713564-51e59866-076d-491a-826b-738353820d4e.png">
 
 ### Clientの作成  
@@ -43,42 +41,117 @@ ClientはPythonを使って作成した。ライブラリはpahoを利用。
 ```
 pip install paho-mqtt 
 ```
-- Pythonのコード
+- Pythonのコード(Pub/Sub)
 ```
 import paho.mqtt.client as mqtt
+import time
 
-# 接続情報を設定
-broker_address = "artemis"  # Artemisのアドレス
-port = 1883  # Artemisのポート番号
-username = "user4"  # ユーザー名
-password = "myPassword"  # パスワード
+# 接続情報
+broker_address = "artemis"  # Artemisのホスト名
+broker_port = 1883  # Artemisのポート番号
+username = "user4"  # Artemisのユーザ名
+password = "myPassword"  # Artemisのパスワード
+client_id = "12345"  # クライアントID
+address = "test"  # アドレス名（ActiveMQ Artemisで事前に作成されている必要があります）
 
-# MQTTクライアントを作成
-client = mqtt.Client()
-#client = mqtt.Client(protocol=mqtt.MQTTv5)
-# 認証情報を設定
-client.username_pw_set(username=username, password=password)
-
-# MQTTブローカーに接続
-client.connect(broker_address, port=port)
-
-# Publishを実行
-topic = "test"
-payload = "Hello, world!!!"
-client.publish(topic, payload)
-print('this is a pen')
-# Subscribeを実行
+# コールバック関数: メッセージ受信時に実行される
 def on_message(client, userdata, message):
-    print("Received message: ", str(message.payload.decode("utf-8")))
+    print("受信したメッセージ:", message.payload.decode())
 
-topic = "test"
-client.subscribe(topic)
+# コールバック関数: Publishの応答処理
+def on_publish(client, userdata, mid):
+    print("メッセージが正常にパブリッシュされました。")
+
+# MQTTクライアントの初期化
+client = mqtt.Client(client_id=client_id)
+
+# 認証情報の設定
+client.username_pw_set(username, password)
+
+# コールバック関数をクライアントに割り当て
 client.on_message = on_message
+client.on_publish = on_publish
 
-# メッセージを待機
-client.loop_forever()
+# Artemisに接続
+client.connect(broker_address, broker_port)
+
+# メッセージ受信のためのループ開始
+client.loop_start()
+
+# アドレスに対するトピックを作成
+topic = address + "/test"
+
+# サブスクライブ（トピックの購読）開始
+client.subscribe(topic)
+
+# メッセージのパブリッシュ
+message = "Hello, Artemis!"
+result, mid = client.publish(topic, payload=message)
+
+# Publishの結果を確認
+if result == mqtt.MQTT_ERR_SUCCESS:
+    print("メッセージがパブリッシュされました。")
+else:
+    print("メッセージのパブリッシュに失敗しました。")
+
+# 一定時間待機してメッセージを受信するための時間を与える
+time.sleep(5)
+
+# 接続の終了
+client.loop_stop()
+client.disconnect()
+
 ```
 
+- Pythonのコード(Pub)
+```
+import paho.mqtt.client as mqtt
+import time
+
+# 接続情報
+broker_address = "artemis"  # Artemisのホスト名
+broker_port = 1883  # Artemisのポート番号
+username = "user4"  # Artemisのユーザ名
+password = "myPassword"  # Artemisのパスワード
+client_id = "12345"  # クライアントID
+topic = "test"  # パブリッシュするトピック
+
+# コールバック関数: Publishの応答処理
+def on_publish(client, userdata, mid):
+    print("メッセージが正常にパブリッシュされました。")
+
+# MQTTクライアントの初期化
+client = mqtt.Client(client_id=client_id)
+
+# 認証情報の設定
+client.username_pw_set(username, password)
+
+# コールバック関数をクライアントに割り当て
+client.on_publish = on_publish
+
+# Artemisに接続
+client.connect(broker_address, broker_port)
+
+# メッセージのパブリッシュ
+message = "Hello, Artemis!"
+
+# 10回のループでメッセージをパブリッシュ
+for i in range(10):
+    # メッセージをパブリッシュ
+    result, mid = client.publish(topic, payload=message)
+
+    # Publishの結果を確認
+    if result == mqtt.MQTT_ERR_SUCCESS:
+        print("メッセージがパブリッシュされました。")
+    else:
+        print("メッセージのパブリッシュに失敗しました。")
+
+    time.sleep(1)  # 1秒間の待機
+
+# 接続の終了
+client.disconnect()
+
+```
 
 ### Broker内の設定（特に見てた設定ファイル）
 Artemis内の設定ファイルのうち、見てたファイルとざっくりメモを書いとく。間違っているかもなのでそこは注意、  
